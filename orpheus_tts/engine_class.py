@@ -34,7 +34,7 @@ class OrpheusModel:
         if (model_name  in unsupported_models):
             raise ValueError(f"Model {model_name} is not supported. Only medium-3b is supported, small, micro and nano models will be released very soon")
         elif model_name in model_map:
-            return model_name[model_name]["repo_id"]
+            return model_map[model_name]["repo_id"]
         else:
             return model_name
         
