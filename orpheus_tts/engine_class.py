@@ -6,17 +6,15 @@ from .decoder import tokens_decoder_sync
 
 class OrpheusModel:    
     def __init__(self, 
-            model_name, 
-            dtype=torch.bfloat16,
-
-            seed: int = 0,
-            max_model_len: Optional[int] = None,
-            cpu_offload_gb: float = 0, # GiB
-            gpu_memory_utilization: float = 0.90,
-            quantization: Optional[str] = None,
-            max_seq_len_to_capture: int = 8192,
-            enforce_eager: Optional[bool] = None
-        ):
+                 model_name, 
+                 dtype=torch.bfloat16,
+                 seed: int = 0,
+                 max_model_len: Optional[int] = None,
+                 cpu_offload_gb: float = 0,  # GiB
+                 gpu_memory_utilization: float = 0.90,
+                 quantization: Optional[str] = None,
+                 max_seq_len_to_capture: int = 8192,
+                 enforce_eager: Optional[bool] = None):
         """
         Initialize the Orpheus Text-to-Speech engine.
         
@@ -64,10 +62,11 @@ class OrpheusModel:
 
         self.model_name = self._map_model_params(model_name)
         self.dtype = dtype
-        self.engine = self._setup_engine(seed, max_model_len, cpu_offload_gb, gpu_memory_utilization, quantization, max_seq_len_to_capture, enforce_eager)
-        self.available_voices = ["zoe", "zac","jess", "leo", "mia", "julia", "leah"]
+        self.engine = self._setup_engine(seed, max_model_len, cpu_offload_gb,
+                                         gpu_memory_utilization, quantization,
+                                         max_seq_len_to_capture, enforce_eager)
+        self.available_voices = ["zoe", "zac", "jess", "leo", "mia", "julia", "leah"]
         self.tokeniser = AutoTokenizer.from_pretrained(model_name)
-
     
     def _map_model_params(self, model_name):
         model_map = {
@@ -85,23 +84,21 @@ class OrpheusModel:
             },
         }
         unsupported_models = ["nano-150m", "micro-400m", "small-1b"]
-        if (model_name  in unsupported_models):
+        if model_name in unsupported_models:
             raise ValueError(f"Model {model_name} is not supported. Only medium-3b is supported, small, micro and nano models will be released very soon")
         elif model_name in model_map:
             return model_map[model_name]["repo_id"]
         else:
             return model_name
         
-    def _setup_engine(
-            self,
-            seed: int = 0,
-            max_model_len: Optional[int] = None,
-            cpu_offload_gb: float = 0, # GiB
-            gpu_memory_utilization: float = 0.90,
-            quantization: Optional[str] = None,
-            max_seq_len_to_capture: int = 8192,
-            enforce_eager: Optional[bool] = None
-        ):
+    def _setup_engine(self,
+                      seed: int = 0,
+                      max_model_len: Optional[int] = None,
+                      cpu_offload_gb: float = 0,
+                      gpu_memory_utilization: float = 0.90,
+                      quantization: Optional[str] = None,
+                      max_seq_len_to_capture: int = 8192,
+                      enforce_eager: Optional[bool] = None):
         """
             Sets up and initializes the LLM engine with specified configuration.
             Args:
@@ -115,7 +112,6 @@ class OrpheusModel:
             Returns:
                 AsyncLLMEngine: Initialized language model engine ready for inference.
         """
-        
         engine_args = AsyncEngineArgs(
             model=self.model_name,
             dtype=self.dtype,
@@ -127,15 +123,16 @@ class OrpheusModel:
             enforce_eager=enforce_eager,
             seed=seed
         )
-
         return AsyncLLMEngine.from_engine_args(engine_args)
     
     def validate_voice(self, voice):
-        if voice:
-            if voice not in self.engine.available_voices:
-                raise ValueError(f"Voice {voice} is not available for model {self.model_name}")
+        if voice and voice not in self.available_voices:
+            raise ValueError(f"Voice {voice} is not available for model {self.model_name}")
     
     def _format_prompt(self, prompt, voice="tara", model_type="larger"):
+        """
+        Synchronously format a prompt given a voice and model type.
+        """
         if model_type == "smaller":
             if voice:
                 return f"<custom_token_3>{prompt}[{voice}]<custom_token_4><custom_token_5>"
@@ -145,38 +142,52 @@ class OrpheusModel:
             if voice:
                 adapted_prompt = f"{voice}: {prompt}"
                 prompt_tokens = self.tokeniser(adapted_prompt, return_tensors="pt")
-                start_token = torch.tensor([[ 128259]], dtype=torch.int64)
+                start_token = torch.tensor([[128259]], dtype=torch.int64)
                 end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
                 all_input_ids = torch.cat([start_token, prompt_tokens.input_ids, end_tokens], dim=1)
                 prompt_string = self.tokeniser.decode(all_input_ids[0])
                 return prompt_string
             else:
                 prompt_tokens = self.tokeniser(prompt, return_tensors="pt")
-                start_token = torch.tensor([[ 128259]], dtype=torch.int64)
+                start_token = torch.tensor([[128259]], dtype=torch.int64)
                 end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
                 all_input_ids = torch.cat([start_token, prompt_tokens.input_ids, end_tokens], dim=1)
                 prompt_string = self.tokeniser.decode(all_input_ids[0])
                 return prompt_string
 
-
-    def generate_tokens_sync(self, prompt, voice=None, request_id="req-001", temperature=0.6, top_p=0.8, max_tokens=1200, stop_token_ids = [49158], repetition_penalty=1.3):
-        prompt_string = self._format_prompt(prompt, voice)
-        print(prompt)
+    async def generate_tokens_async(self, prompt, voice=None, request_id="req-001",
+                                    temperature=0.6, top_p=0.8, max_tokens=1200,
+                                    stop_token_ids=[49158], repetition_penalty=1.3):
+        """
+        Asynchronously generates tokens by first formatting the prompt in parallel.
+        """
+        prompt_string = await asyncio.to_thread(self._format_prompt, prompt, voice)
         sampling_params = SamplingParams(
             temperature=temperature,
             top_p=top_p,
-            max_tokens=max_tokens,  # Adjust max_tokens as needed.
-            stop_token_ids = stop_token_ids, 
-            repetition_penalty=repetition_penalty, 
+            max_tokens=max_tokens,
+            stop_token_ids=stop_token_ids,
+            repetition_penalty=repetition_penalty,
         )
+        async for result in self.engine.generate(prompt=prompt_string,
+                                                  sampling_params=sampling_params,
+                                                  request_id=request_id):
+            yield result.outputs[0].text
 
+    def generate_tokens_sync(self, prompt, voice=None, request_id="req-001",
+                             temperature=0.6, top_p=0.8, max_tokens=1200,
+                             stop_token_ids=[49158], repetition_penalty=1.3):
+        """
+        Synchronous wrapper that uses a thread to run the asynchronous token generation.
+        """
         token_queue = queue.Queue()
 
         async def async_producer():
-            async for result in self.engine.generate(prompt=prompt_string, sampling_params=sampling_params, request_id=request_id):
-                # Place each token text into the queue.
-                token_queue.put(result.outputs[0].text)
-            token_queue.put(None)  # Sentinel to indicate completion.
+            async for token in self.generate_tokens_async(prompt, voice, request_id,
+                                                           temperature, top_p, max_tokens,
+                                                           stop_token_ids, repetition_penalty):
+                token_queue.put(token)
+            token_queue.put(None)
 
         def run_async():
             asyncio.run(async_producer())
@@ -193,6 +204,7 @@ class OrpheusModel:
         thread.join()
     
     def generate_speech(self, **kwargs):
+        """
+        Returns the decoded speech audio by processing generated tokens.
+        """
         return tokens_decoder_sync(self.generate_tokens_sync(**kwargs))
-
-
